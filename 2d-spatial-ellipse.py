@@ -26,9 +26,8 @@ MAX_POINTS = 200_000
 RANSAC_RESIDUAL = 2.0
 NN_SMOOTH_K = 12   # spatial averaging strength
 
-# -----------------------------
-# LOAD + FILTER
-# -----------------------------
+# FILTER
+
 soil = pv.read("prestress_binary.vtk")
 points = np.asarray(soil.points)
 
@@ -37,34 +36,55 @@ tool_pts = np.asarray(tool.vertices)
 
 print("Total soil points:", points.shape)
 
-# Distance filter to isolate hole region
-tree = cKDTree(tool_pts)
-dists, _ = tree.query(points, k=1)
+# PCA
 
-hole_pts = points[dists < 20.0]  # adjust threshold
+pca_tool = PCA(n_components=3)
+pca_tool.fit(tool_pts)
 
+bore_axis = pca_tool.components_[0]  # dominant direction
+bore_axis /= np.linalg.norm(bore_axis)
+
+bore_center = tool_pts.mean(axis=0)
+
+tool_vecs = tool_pts - bore_center
+tool_axial = tool_vecs @ bore_axis
+tool_proj = bore_center + np.outer(tool_axial, bore_axis)
+tool_radial = tool_pts - tool_proj
+
+bore_radius = np.mean(np.linalg.norm(tool_radial, axis=1))
+
+print("Estimated bore radius:", bore_radius)
+
+vecs = points - bore_center
+axial_proj = vecs @ bore_axis
+proj_pts = bore_center + np.outer(axial_proj, bore_axis)
+
+radial_vec = points - proj_pts
+radial_dist = np.linalg.norm(radial_vec, axis=1)
+
+band = 2.0   # thickness tolerance (adjust 1.0–3.0 if needed)
+
+mask = (
+    (radial_dist > bore_radius - band) &
+    (radial_dist < bore_radius + band)
+)
+
+hole_pts = points[mask]
+
+# subsample for performance
 if hole_pts.shape[0] > MAX_POINTS:
     idx = np.random.choice(hole_pts.shape[0], MAX_POINTS, replace=False)
     hole_pts = hole_pts[idx]
 
 print("Filtered hole points:", hole_pts.shape)
 
-# -----------------------------
-# PCA AXIS
-# -----------------------------
-
-pca = PCA(3)
-pca.fit(hole_pts)
-
-main_dir = pca.components_[0]
-center0 = hole_pts.mean(axis=0)
+main_dir = bore_axis
+center0 = bore_center
 
 proj = (hole_pts - center0) @ main_dir
 s_min, s_max = proj.min(), proj.max()
-order = np.argsort(proj)
-proj_sorted = proj[order]
-hole_sorted = hole_pts[order]
 
+# Sort once
 order = np.argsort(proj)
 proj_sorted = proj[order]
 hole_sorted = hole_pts[order]
