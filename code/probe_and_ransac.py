@@ -9,11 +9,12 @@ from scipy.ndimage import (
     binary_opening,
     binary_closing,
     binary_erosion,
-    binary_fill_holes,
 )
+from scipy.ndimage import binary_fill_holes  # used for enclosed-cavity isolation
+
 
 # ============================================================
-# Config
+# Config (kept minimal + generally transferable)
 # ============================================================
 vtk_path = "/Users/akhilgorla/Downloads/prestress2800000.vtk"
 
@@ -33,7 +34,7 @@ LOW_DENSITY_Q = 0.10
 PAD_FRAC_A = 0.10
 PAD_FRAC_B = 0.10
 
-# Mild morphology
+# Mild morphology (avoid fill_holes on low itself; we do topological cavity isolation separately)
 DO_MORPH = True
 OPEN_ITERS = 1
 CLOSE_ITERS = 1
@@ -46,24 +47,17 @@ OCC_DILATE_ITERS = 6  # tune lightly if needed
 MIN_COMP_AREA = 150
 MAX_ASPECT = 8.0
 
-# Mirroring (x–z plane symmetry => flip y)
-DO_MIRROR = True
-MIRROR_AXIS = 1          # 0=x, 1=y, 2=z
-MIRROR_MODE = "augment"  # "augment" keeps original + mirrored
-
 # Output
 SHOW_PLOT = True
-RUN_TAG = "mirrored" if DO_MIRROR else "original"
-SAVE_BOUNDARY = f"boundary_{RUN_TAG}.png"
-SAVE_DENSITY  = f"density_{RUN_TAG}.png"
-SAVE_NPY      = f"boundary_pts_{RUN_TAG}_axis{CHOSEN_AXIS}.npy"
-SAVE_ELLIPSE  = f"ellipse_fit_{RUN_TAG}_axis{CHOSEN_AXIS}.png"
+SAVE_BOUNDARY = "boundary_general.png"
+SAVE_DENSITY = "density_general.png"
+SAVE_NPY = "boundary_pts_axis0.npy"
 
 RNG_SEED = 0
 
 
 # ============================================================
-# Helpers
+# Utilities
 # ============================================================
 def timed(msg: str):
     print(msg, flush=True)
@@ -118,106 +112,50 @@ def compactness_from_mask(mask: np.ndarray):
     return float(compact), A, P
 
 def density_gradient(D: np.ndarray):
-    gy, gx = np.gradient(D)  # D indexed [b,a]
-    return np.sqrt(gx * gx + gy * gy)
+    # D indexed [b, a]
+    gy, gx = np.gradient(D)  # gy: along rows (b), gx: along cols (a)
+    G = np.sqrt(gx * gx + gy * gy)
+    return G
+
+def contour_paths(AA, BB, D, level):
+    """
+    Use matplotlib contouring to extract contour line(s) at a given density level.
+    Returns list of (N,2) arrays of xy coords.
+    """
+    cs = plt.contour(AA, BB, D, levels=[level])
+    paths = []
+    for coll in cs.collections:
+        for p in coll.get_paths():
+            v = p.vertices
+            if v is not None and len(v) >= 10:
+                paths.append(v.copy())
+    plt.close()  # prevent display
+    return paths
+
+def polygon_area(poly: np.ndarray):
+    # poly shape (N,2), closed or not; computes signed area magnitude
+    x = poly[:, 0]
+    y = poly[:, 1]
+    return 0.5 * float(np.abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+def poly_bbox_aspect(poly: np.ndarray):
+    x = poly[:, 0]
+    y = poly[:, 1]
+    w = (x.max() - x.min()) + 1e-12
+    h = (y.max() - y.min()) + 1e-12
+    return max(h / w, w / h)
 
 def sample_grid_at_points(aa, bb, G, pts):
     """
     Sample grid image G (indexed [b,a]) at continuous pts (A,B) via nearest-neighbor.
     """
+    # Map coordinates to indices
     a_min, a_max = aa[0], aa[-1]
     b_min, b_max = bb[0], bb[-1]
+    # normalize to [0, GRID_N-1]
     ai = np.clip(((pts[:, 0] - a_min) / (a_max - a_min) * (len(aa) - 1)).round().astype(int), 0, len(aa) - 1)
     bi = np.clip(((pts[:, 1] - b_min) / (b_max - b_min) * (len(bb) - 1)).round().astype(int), 0, len(bb) - 1)
     return G[bi, ai]
-
-def mirror_points(points: np.ndarray, axis: int = 1, mode: str = "augment") -> np.ndarray:
-    """
-    Mirror points about the plane where the chosen coordinate is 0.
-    For x–z plane symmetry: axis=1 (y), so y -> -y.
-
-    mode:
-      - "augment": returns [points; mirrored(points)]
-      - "replace": returns mirrored(points)
-    """
-    mirrored = points.copy()
-    mirrored[:, axis] *= -1.0
-    if mode == "augment":
-        return np.vstack([points, mirrored])
-    elif mode == "replace":
-        return mirrored
-    else:
-        raise ValueError("mode must be 'augment' or 'replace'")
-
-# -----------------------------
-# V2: candidate raw points near boundary + analytic ellipse fit + metrics
-# -----------------------------
-def boundary_band_raw_points(A: np.ndarray, B: np.ndarray, boundary_pts: np.ndarray, band: float):
-    """
-    Select raw slice points within distance 'band' of the extracted boundary point-set.
-    Uses chunked nearest-boundary-point distances.
-    """
-    P = np.column_stack([A, B])     # (N,2)
-    Q = boundary_pts                # (M,2)
-
-    N = P.shape[0]
-    chunk = 5000
-    keep = np.zeros(N, dtype=bool)
-    band2 = band * band
-
-    for i0 in range(0, N, chunk):
-        i1 = min(i0 + chunk, N)
-        d2 = ((P[i0:i1, None, :] - Q[None, :, :]) ** 2).sum(axis=2)  # (chunk, M)
-        keep[i0:i1] = (d2.min(axis=1) <= band2)
-
-    return P[keep]
-
-def fit_ellipse_pca(points2d: np.ndarray):
-    """
-    Analytic-ish ellipse approximation:
-      - center = mean
-      - orientation from PCA eigenvectors
-      - radii from robust percentiles in PCA frame
-    Returns center (2,), axes (a,b), R (2x2) where columns are principal axes.
-    """
-    C = points2d.mean(axis=0)
-    X = points2d - C
-
-    cov = np.cov(X.T)
-    vals, vecs = np.linalg.eigh(cov)
-    order = np.argsort(vals)[::-1]
-    vecs = vecs[:, order]  # principal axes as columns
-
-    Y = X @ vecs
-    a = np.percentile(np.abs(Y[:, 0]), 90)
-    b = np.percentile(np.abs(Y[:, 1]), 90)
-
-    # Ensure a >= b
-    if b > a:
-        a, b = b, a
-        vecs = vecs[:, ::-1]
-
-    return C, (a, b), vecs
-
-def ellipse_residuals(points2d: np.ndarray, center: np.ndarray, axes: tuple, R: np.ndarray):
-    """
-    Residual based on normalized radius:
-      u = R^T (p-center)
-      rho = sqrt((u_x/a)^2 + (u_y/b)^2)
-      residual ≈ |rho - 1| * mean_axis
-    """
-    a, b = axes
-    X = points2d - center
-    U = X @ R
-    rho = np.sqrt((U[:, 0] / a) ** 2 + (U[:, 1] / b) ** 2)
-    mean_axis = 0.5 * (a + b)
-    return np.abs(rho - 1.0) * mean_axis
-
-def ellipse_points(center, axes, R, n=300):
-    a, b = axes
-    t = np.linspace(0, 2*np.pi, n)
-    circ = np.column_stack([a*np.cos(t), b*np.sin(t)])  # ellipse frame
-    return circ @ R.T + center
 
 
 # ============================================================
@@ -228,15 +166,6 @@ mesh = pv.read(vtk_path)
 done(t0, "VTK loaded")
 points = mesh.points
 print(f"Total points in mesh: {points.shape[0]}", flush=True)
-print("y range BEFORE mirror:", points[:, 1].min(), points[:, 1].max(), flush=True)
-
-if DO_MIRROR:
-    t_m = timed(f"Mirroring points about axis={MIRROR_AXIS} ({['x','y','z'][MIRROR_AXIS]}) mode={MIRROR_MODE}...")
-    points = mirror_points(points, axis=MIRROR_AXIS, mode=MIRROR_MODE)
-    done(t_m, "Mirroring done")
-    print(f"Total points after mirroring ({MIRROR_MODE}): {points.shape[0]}", flush=True)
-
-print("y range AFTER mirror:", points[:, 1].min(), points[:, 1].max(), flush=True)
 
 t0 = timed("Extracting slice...")
 slice_pts, center, thickness = extract_slice(points, CHOSEN_AXIS, frac=SLICE_FRAC, thickness_frac=THICKNESS_FRAC)
@@ -251,7 +180,7 @@ print("2D axes:", xlabel, "vs", ylabel, flush=True)
 A_s, B_s = subsample_xy(A, B, SUBSAMPLE, seed=RNG_SEED)
 print(f"Using subsample for density: {len(A_s)} points", flush=True)
 
-# Bounds + padding
+# Full-slice bounds + padding
 a_min, a_max = float(np.min(A)), float(np.max(A))
 b_min, b_max = float(np.min(B)), float(np.max(B))
 pad_a = PAD_FRAC_A * (a_max - a_min)
@@ -260,7 +189,9 @@ a_min_p, a_max_p = a_min - pad_a, a_max + pad_a
 b_min_p, b_max_p = b_min - pad_b, b_max + pad_b
 print(f"Padded bounds: {xlabel}[{a_min_p:.6g},{a_max_p:.6g}]  {ylabel}[{b_min_p:.6g},{b_max_p:.6g}]", flush=True)
 
-# Density field: histogram + blur
+# ------------------------------------------------------------
+# Density field = histogram + gaussian blur (KDE-like)
+# ------------------------------------------------------------
 t0 = timed("Building 2D histogram...")
 H, a_edges, b_edges = np.histogram2d(
     A_s, B_s,
@@ -278,7 +209,7 @@ aa = 0.5 * (a_edges[:-1] + a_edges[1:])
 bb = 0.5 * (b_edges[:-1] + b_edges[1:])
 AA, BB = np.meshgrid(aa, bb)
 
-# Occupancy gate
+# Optional occupancy gate (prevents far-outside selection)
 if USE_OCCUPANCY_GATE:
     from scipy.ndimage import binary_dilation
     occ = (H.T > 0)
@@ -286,7 +217,9 @@ if USE_OCCUPANCY_GATE:
 else:
     occ = np.ones_like(D, dtype=bool)
 
-# Quantile threshold
+# ------------------------------------------------------------
+# Quantile threshold -> low-density candidate (dataset-normalized)
+# ------------------------------------------------------------
 thr = float(np.quantile(D[occ], LOW_DENSITY_Q))
 print(f"Low-density threshold (quantile): q={LOW_DENSITY_Q} thr={thr:.6g}", flush=True)
 
@@ -298,12 +231,16 @@ if DO_MORPH:
     low = binary_closing(low, iterations=CLOSE_ITERS)
     done(t0, "Morph cleanup done")
 
-# Enclosed cavities
+# ------------------------------------------------------------
+# Topological cavity isolation:
+# Remove outside low-density region by keeping only enclosed low regions.
+# holes = (low) ∩ fill_holes(~low)
+# ------------------------------------------------------------
 t0 = timed("Isolating enclosed cavities (remove outside background)...")
 holes = binary_fill_holes(~low) & low
 done(t0, "Cavity isolation done")
 
-# Components
+# Connected components on enclosed cavities
 t0 = timed("Connected components on cavities...")
 lbl, ncomp = label(holes)
 done(t0, "Connected components computed")
@@ -316,7 +253,9 @@ if ncomp == 0:
         "or increase SMOOTH_SIGMA slightly."
     )
 
-# Score cavities
+# ------------------------------------------------------------
+# Score cavities: (gradient strength on boundary) + compactness + area sanity
+# ------------------------------------------------------------
 G = density_gradient(D)
 
 best_id = None
@@ -340,6 +279,10 @@ for cid in range(1, ncomp + 1):
     if compact <= 1e-8:
         continue
 
+    # Use contour at thr to get a smoother boundary curve
+    # We extract all contours at 'thr' and pick the one with centroid inside this component
+    # For simplicity, we'll approximate by taking the component's erosion boundary pixels to score,
+    # then later extract a contour for visualization.
     er = binary_erosion(comp)
     boundary_pix = comp & (~er)
 
@@ -351,14 +294,18 @@ for cid in range(1, ncomp + 1):
     boundary_B = bb[bi]
     boundary_pts = np.column_stack([boundary_A, boundary_B])
 
+    # Gradient strength along boundary (interface should be strong)
     grad_vals = sample_grid_at_points(aa, bb, G, boundary_pts)
     grad_mean = float(np.mean(grad_vals))
     grad_p75 = float(np.percentile(grad_vals, 75))
 
+    # Penalize cavities that are extremely large relative to grid (likely not tunnel)
     frac = comp_area / float(GRID_N * GRID_N)
     if frac > 0.35:
         continue
 
+    # Combined score (weights are generic; gradient dominates)
+    # compactness helps reject frame-like shapes; gradient enforces "real interface"
     score = (2.0 * grad_p75 + 1.0 * grad_mean) + (5.0 * compact) - (2.0 * frac)
 
     print(
@@ -391,36 +338,9 @@ if best_id is None:
 
 print("\nSelected cavity:", best_info, flush=True)
 
-# Save boundary points (mask boundary)
+# Save boundary points (pixel-boundary; you can switch to contour-based later)
 np.save(SAVE_NPY, best_boundary_pts)
 print(f"Saved boundary points: {SAVE_NPY}", flush=True)
-
-# ============================================================
-# V2: Candidate raw points near boundary + ellipse fit + metrics
-# ============================================================
-cell_a = (a_max_p - a_min_p) / GRID_N
-cell_b = (b_max_p - b_min_p) / GRID_N
-BAND = 2.0 * max(cell_a, cell_b)
-print(f"Using boundary band: {BAND:.6g}", flush=True)
-
-cand = boundary_band_raw_points(A, B, best_boundary_pts, band=BAND)
-print("Candidate raw boundary-near points:", cand.shape[0], flush=True)
-
-if cand.shape[0] < 50:
-    raise RuntimeError("Too few candidate points near boundary for ellipse fit. Increase BAND or adjust thresholds.")
-
-C_hat, axes_hat, R_hat = fit_ellipse_pca(cand)
-a_hat, b_hat = axes_hat
-AR_hat = a_hat / b_hat
-print(f"Ellipse fit: center=({C_hat[0]:.6g},{C_hat[1]:.6g}) a={a_hat:.6g} b={b_hat:.6g} aspect={AR_hat:.4f}", flush=True)
-
-res = ellipse_residuals(cand, C_hat, axes_hat, R_hat)
-print(
-    f"Fit residuals (raw): median={np.median(res):.6g}  p90={np.percentile(res,90):.6g}  max={res.max():.6g}",
-    flush=True
-)
-
-ell = ellipse_points(C_hat, axes_hat, R_hat, n=300)
 
 # ============================================================
 # Plots
@@ -453,7 +373,12 @@ plt.imshow(
     aspect="auto",
 )
 plt.scatter(A_s, B_s, s=1, alpha=0.12)
+
+# show the threshold contour
 plt.contour(AA, BB, D, levels=[thr], linewidths=2)
+
+# show enclosed cavities mask outline (optional visual)
+# (Plot as semi-transparent overlay)
 plt.imshow(
     holes.astype(float),
     origin="lower",
@@ -461,31 +386,13 @@ plt.imshow(
     alpha=0.18,
     aspect="auto",
 )
+
 plt.xlabel(xlabel)
 plt.ylabel(ylabel)
 plt.title(f"Density + threshold contour + enclosed cavities overlay (q={LOW_DENSITY_Q})")
 plt.tight_layout()
 plt.savefig(SAVE_DENSITY, dpi=200)
 print("Saved:", SAVE_DENSITY, flush=True)
-
-# Ellipse overlay plot (analytic model + raw candidates)
-plt.figure(figsize=(8, 6))
-plt.imshow(
-    D,
-    origin="lower",
-    extent=[a_min_p, a_max_p, b_min_p, b_max_p],
-    aspect="auto",
-)
-plt.scatter(A_s, B_s, s=1, alpha=0.08, label="slice points (subsample)")
-plt.scatter(cand[:, 0], cand[:, 1], s=2, alpha=0.35, label="candidate raw pts (near boundary)")
-plt.plot(ell[:, 0], ell[:, 1], linewidth=2, label=f"ellipse fit (AR={AR_hat:.3f})")
-plt.xlabel(xlabel)
-plt.ylabel(ylabel)
-plt.title(f"Analytic ellipse fit on raw points (axis={['x','y','z'][CHOSEN_AXIS]})")
-plt.legend(loc="best")
-plt.tight_layout()
-plt.savefig(SAVE_ELLIPSE, dpi=200)
-print("Saved:", SAVE_ELLIPSE, flush=True)
 
 if SHOW_PLOT:
     plt.show()
