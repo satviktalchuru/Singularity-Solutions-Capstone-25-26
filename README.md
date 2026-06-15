@@ -1,29 +1,32 @@
 # Singularity-Solutions-Capstone-25-26
 
-This repository contains code and experiments for reconstructing a borehole from noisy horizontal directional drilling (HDD) simulation data. The goal is to extract the drilled tunnel from a 3D soil point cloud, fit its geometry using statistical methods, and export a clean surface model in STL format for visualization and analysis.
-Inputs:
-VTK file: Soil particle point cloud
-STL file: Drill tool geometry
-Output:
-STL file: Reconstructed borehole surface
-This project compares multiple RANSAC-based modeling approaches implemented by different team members.
+# Reconstruction of a Simulated Borehole from Unstructured Particle Data
 
-This repository contains code and experiments for reconstructing a borehole from noisy horizontal directional drilling (HDD) simulation data. The goal is to extract the drilled tunnel from a 3D soil point cloud, fit its geometry using statistical methods, and export a clean surface model in STL format for visualization and analysis.
-  Inputs:
-    VTK file: Soil particle point cloud
-    STL file: Drill tool geometry
-  Output:
-    STL file: Reconstructed borehole surface
-    
-This project compares multiple RANSAC-based modeling approaches implemented by different team members.
+This repository contains a prototype pipeline for reconstructing an inferred borehole from a noisy 3D VTK point cloud. The borehole is **not explicitly modeled** in the input data; instead, it is inferred from **low-density cavities** observed in 2D cross-sections and then lofted into a conservative, watertight 3D mesh.
 
-Problem Statement
-Horizontal directional drilling simulations produce large, noisy point clouds. While the drill path exists in this data, it is not directly usable for engineering analysis.
-This project addresses:
-- How to locate the borehole inside noisy soil data
-- How to estimate its centerline and shape
-- How to reconstruct a continuous surface
-- How to export the result in a usable format
+The current production workflow lives in `visualization/loft_export_v1.py`. A simpler slice-level diagnostic tool lives in `visualization/probe_and_ransac.py`.
 
+## Overview
 
+Horizontal directional drilling (HDD) simulations can produce large, unstructured particle clouds without an explicit borehole surface. This project reconstructs the borehole by:
 
+1. Slicing the 3D point cloud along the drill path
+2. Projecting each slice into 2D
+3. Detecting interior low-density cavities
+4. Fitting an elliptical cross-section to the cavity boundary
+5. Enforcing slice-to-slice continuity
+6. Lofting accepted cross-sections into a watertight 3D surface
+
+The result is a CAD-friendly mesh representation of the borehole geometry that is easier to inspect and analyze than raw particle data.
+
+## Current Status
+
+This repository reflects the **current production pipeline**, which includes:
+
+- Border-touching component rejection
+- PCA-based ellipse initialization
+- Nonlinear ellipse refinement
+- Metric-driven candidate selection
+- Short-gap interpolation for internal failures
+- Deterministic strip lofting
+- Watertightness checks via boundary/nonmanifold edge counts
