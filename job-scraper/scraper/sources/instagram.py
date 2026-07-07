@@ -46,8 +46,13 @@ def _parse_atom(xml_text: str, username: str) -> list[Listing]:
     for entry in root.findall("atom:entry", ATOM_NS)[:MAX_RESULTS_PER_SOURCE]:
         title_el = entry.find("atom:title", ATOM_NS)
         link_el = entry.find("atom:link", ATOM_NS)
-        published_el = (entry.find("atom:published", ATOM_NS)
-                       or entry.find("atom:updated", ATOM_NS))
+        # NOTE: `entry.find(...) or entry.find(...)` is a trap here -- an
+        # ElementTree Element with no children is falsy regardless of its
+        # .text, so a real <published>...</published> node still tripped
+        # the `or` fallback. Use explicit `is not None` checks instead.
+        published_el = entry.find("atom:published", ATOM_NS)
+        if published_el is None:
+            published_el = entry.find("atom:updated", ATOM_NS)
         caption = (title_el.text or "").strip() if title_el is not None else ""
         link = link_el.get("href", "") if link_el is not None else ""
         if not link:
