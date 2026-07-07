@@ -1,25 +1,23 @@
-# job-scraper — zero-cost daily job & content alerts
+# job-scraper — zero-cost daily job & content scraper
 
-A locally hosted, 100% free daily scraper. Runs on your own residential
-connection, stores everything in a local SQLite file to suppress duplicate
-alerts, and texts you a condensed digest — **only for postings from the last
-48 hours** — through a free email-to-SMS gateway. Everything older (or
-undated) still gets scraped and stored, just not texted; search it anytime
-with `python -m scraper.query`. No paid APIs, no cloud services, no
-subscriptions.
+A locally hosted, 100% free daily scraper. Runs on your own machine, stores
+everything in a local SQLite file to suppress duplicate rows, and appends
+every newly-found listing to a plain CSV file — no email, no SMS, no
+credentials, no gateway to configure. Open `listings.csv` in Excel/Sheets/
+pandas whenever you want to check what's new.
 
 ```
-┌──────────────────────────── daily run (cron / Task Scheduler) ─────────────────────────────┐
-│                                                                                             │
-│  SCRAPING LAYER                        DATABASE LAYER          NOTIFICATION LAYER          │
-│  ─────────────────────────             ───────────────         ────────────────────        │
-│  fortune500  (Playwright/httpx)   ─┐                                                        │
-│  ashby       (httpx JSON API)     ─┤                          ┌─▶ new & <48h ─▶ SMS digest  │
-│  workday     (httpx CXS API)      ─┤─▶ jobs.db (SQLite) ──────┤   (Gmail SMTP → carrier      │
-│  github      (httpx REST API)     ─┤   sha256(link|title)     │    gateway, e.g. @vtext.com) │
-│  instagram   (RSS-Bridge, zero2sudo)┤  INSERT OR IGNORE       └─▶ everything else: stored    │
-│  job_boards  (Google CSE / RSS)   ─┘  full history, always        only, `scraper.query`      │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────── daily run (cron / Task Scheduler) ───────────────────────┐
+│                                                                                │
+│  SCRAPING LAYER                        DEDUP LAYER            OUTPUT          │
+│  ─────────────────────────             ───────────────        ────────────    │
+│  fortune500  (Playwright/httpx)   ─┐                                          │
+│  ashby       (httpx JSON API)     ─┤                                          │
+│  workday     (httpx CXS API)      ─┤─▶ jobs.db (SQLite) ──▶ new rows only ──▶  │
+│  github      (httpx REST API)     ─┤   sha256(link|title)      listings.csv   │
+│  instagram   (RSS-Bridge, zero2sudo)┤  INSERT OR IGNORE                       │
+│  job_boards  (Google CSE / RSS)   ─┘  full history, always                    │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick start
@@ -30,12 +28,28 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 playwright install chromium
 
-cp .env.example .env        # then fill in your Gmail app password etc.
-
-python -m scraper.main --dry-run    # test scrape, nothing saved or sent
-python -m scraper.main              # real run: dedupe + SMS digest (<48h only)
+python -m scraper.main --dry-run    # test scrape, nothing saved
+python -m scraper.main              # real run: dedupe + append to listings.csv
 python -m scraper.query python      # search everything ever scraped, any age
 ```
+
+No `.env` file is required to run this at all — `cp .env.example .env` only
+matters if you want the two optional tokens described below (higher GitHub
+rate limits, the Google CSE job-board source).
+
+## Output: `listings.csv`
+
+Every run appends new rows (existing ones are never rewritten) with columns:
+
+```
+source, title, link, posted_at, scraped_at, recent_48h
+```
+
+`posted_at` is filled in when the source provides a real timestamp (Ashby,
+GitHub, RSS `pubDate`, Instagram); `recent_48h` is a convenience True/False
+(blank if unknown) so you can filter/sort for "what's actually new" in
+Excel/Sheets without recomputing it — it doesn't gate what gets written,
+every new listing is always appended regardless of age.
 
 ## Configuration
 
@@ -47,19 +61,14 @@ module documents its entry format at the top of the file:
 |---|---|---|---|---|
 | `fortune500` | `sources/fortune500.py` | httpx (JSON) or stealth Playwright (HTML) | `mode: "json"` with `list_path`/`title_key`/`link_key`(+optional `posted_at_key`), or `mode: "html"` with CSS selectors | JSON: if `posted_at_key` set. HTML: no. |
 | `ashby` | `sources/ashby.py` | httpx → Ashby's public JSON board API | `{"name": "...", "board": "..."}` | Yes — always. |
-| `workday` | `sources/workday.py` | httpx → Workday CXS API (POST) | `{"name": "...", "api_url": "...", "career_site_url": "..."}` | Approximate — Workday only gives relative text ("Posted 3 Days Ago"); "30+ Days Ago" counts as unknown. |
+| `workday` | `sources/workday.py` | httpx → Workday CXS API (POST) | `{"name": "...", "api_url": "...", "career_site_url": "..."}` | Approximate — Workday only gives relative text ("Posted 3 Days Ago"). |
 | `github` | `sources/github_repos.py` | httpx → GitHub REST API | `{"repo": "owner/name", "watch": ["commits", "releases"]}` | Yes — commit/release timestamps. |
 | `instagram` | `sources/instagram.py` | httpx → RSS-Bridge Atom feed | `{"username": "zero2sudo", "bridge_url": "http://localhost:3000"}` (only `zero2sudo` is configured) | Yes — Atom `published`/`updated`. |
-| `job_boards` | `sources/job_boards.py` | httpx → Google CSE API or RSS | `mode: "google_cse"` (needs free key) or `mode: "rss"` | RSS: yes (`pubDate`). Google CSE: no — Google's index date isn't a reliable posting date, so these never make the SMS digest, only the archive. |
+| `job_boards` | `sources/job_boards.py` | httpx → Google CSE API or RSS | `mode: "google_cse"` (needs free key) or `mode: "rss"` | RSS: yes (`pubDate`). Google CSE: no. |
 
-**Why this matters**: only listings with a known `posted_at` within the last
-48 hours (`CONFIG["notify"]["recent_hours"]`) go into the SMS. Ashby and
-Workday are the two ATS platforms most Fortune-500-and-up companies actually
-run their career sites on, so they're the primary sources for time-sensitive
-alerts — add companies there first.
-
-Secrets go in `.env` (git-ignored) — see `.env.example` for every variable,
-including the carrier gateway address table (`@vtext.com`, `@txt.att.net`, …).
+Ashby and Workday are the two ATS platforms most Fortune-500-and-up companies
+actually run their career sites on, so they're the best sources to add
+companies to first if you want reliable posting dates.
 
 ### Finding a company's JSON careers endpoint
 
@@ -79,10 +88,7 @@ No key needed, and postings carry a real timestamp.
 **Workday**: open the company's careers page, devtools → Network → filter
 XHR → reload → find the POST request ending in `/jobs` (e.g.
 `https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs`) and drop it
-into `CONFIG["sources"]["workday"]` as `api_url`. Workday only reports
-relative age ("Posted Today", "Posted 3 Days Ago"), which is converted to an
-approximate timestamp — anything "30+ Days Ago" is treated as unknown-old and
-excluded from the SMS (still stored).
+into `CONFIG["sources"]["workday"]` as `api_url`.
 
 ### Instagram prerequisite
 
@@ -96,6 +102,15 @@ docker run -d --name rss-bridge --restart unless-stopped -p 3000:80 rssbridge/rs
 Only public profiles work. Only `zero2sudo` is configured — add more entries
 to `CONFIG["sources"]["instagram"]` if you want additional accounts, or empty
 the list to drop Instagram entirely.
+
+### Optional tokens (`.env`, not required to run)
+
+- `GITHUB_TOKEN` — raises the unauthenticated GitHub API limit (60/hr) to
+  5000/hr. Leave blank and it still works, just more likely to get
+  rate-limited on a busy day.
+- `GOOGLE_CSE_KEY` / `GOOGLE_CSE_CX` — free Google Programmable Search
+  (100 queries/day), only used by the LinkedIn-via-Google-CSE job_boards
+  entry. Leave blank to skip just that one source.
 
 ## Scheduling the daily run
 
@@ -123,20 +138,16 @@ trigger settings for the same jitter effect).
   human pause (`utils.human_sleep`). Sources start with staggered jitter so
   nothing fires simultaneously.
 - **Deduplication**: `job_id = sha256(lowercased link | title)`; `INSERT OR
-  IGNORE` into `jobs.db` means a listing alerts exactly once, ever. The table
-  is append-only, doubling as a searchable history of everything found.
+  IGNORE` into `jobs.db` means a listing is only ever appended to the CSV
+  once, no matter how many times it's re-scraped. The table is append-only,
+  doubling as a searchable history of everything found (`scraper.query`).
 - **Fault isolation**: every source and every item is wrapped in its own
   try/except — a changed page layout or a dead feed logs an error and yields
-  zero listings instead of killing the run or the SMS.
-- **SMS budget**: the digest is compressed (abbreviated per-source counts,
-  40-char titles), chunked at 150 chars per message, and hard-capped at 4
-  parts per day so a scraper bug can't flood your phone.
-- **48-hour window**: every scraper attaches a `posted_at` timestamp when the
-  source provides one (`Listing.posted_at` in `utils.py`). `main.py` texts
-  only listings where `is_recent(48)` is true; everything else — older
-  postings, or sources with no reliable date (HTML-scraped pages, Google CSE)
-  — is still persisted in `jobs.db` and searchable with `scraper.query`, just
-  silently, without a text.
+  zero listings instead of killing the run.
+- **No credentials required.** The old version of this project sent an SMS
+  digest via Gmail SMTP + a carrier email-to-SMS gateway; that's gone. Output
+  is just a local CSV file, so there's nothing to authenticate and nothing
+  that leaves your machine.
 - **LinkedIn**: never scraped directly (login-walled, ToS-protected).
   Postings are pulled from Google's already-public index via the free
   Programmable Search API, or from job-board RSS feeds.

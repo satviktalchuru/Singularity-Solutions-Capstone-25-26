@@ -1,9 +1,10 @@
 # Secrets
 .env
 
-# Local database & logs
+# Local database, CSV output & logs
 *.db
 *.db-journal
+listings.csv
 logs/
 
 # Python

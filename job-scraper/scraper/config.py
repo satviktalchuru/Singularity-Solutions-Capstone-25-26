@@ -56,27 +56,10 @@ MAX_RESULTS_PER_SOURCE = 25
 CONFIG: dict = {
     "database_path": str(PROJECT_ROOT / "jobs.db"),
 
-    # -----------------------------------------------------------------------
-    # NOTIFICATIONS -- SMS gateways truncate around 160 chars, so the digest
-    # is chunked; `max_sms_parts` caps how many messages one run may send.
-    # Only listings posted within `recent_hours` make it into the text --
-    # everything older (or with an unknown post date) is still stored in
-    # jobs.db and reachable via `python -m scraper.query`.
-    # -----------------------------------------------------------------------
-    "notify": {
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": 465,  # implicit SSL
-        "sender": os.getenv("GMAIL_ADDRESS", ""),
-        "app_password": os.getenv("GMAIL_APP_PASSWORD", ""),
-        "recipients": [
-            r.strip()
-            for r in os.getenv("NOTIFY_RECIPIENTS", "9259185702@vtext.com").split(",")
-            if r.strip()
-        ],
-        "recent_hours": 48,
-        "sms_chunk_size": 150,
-        "max_sms_parts": 4,
-    },
+    # CSV output -- no credentials, no gateway, nothing to configure. Every
+    # run appends its newly-found listings here (existing rows are never
+    # rewritten). Open it in Excel/Sheets/pandas whenever you want to check.
+    "csv_path": str(PROJECT_ROOT / "listings.csv"),
 
     # -----------------------------------------------------------------------
     # SOURCES -- add/remove entries freely; each scraper module documents its

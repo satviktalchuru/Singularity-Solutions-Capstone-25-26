@@ -1,20 +1,18 @@
 """Daily run orchestrator.
 
-    python -m scraper.main                 # full run: scrape -> dedup -> SMS
+    python -m scraper.main                 # full run: scrape -> dedup -> append to CSV
     python -m scraper.main --dry-run       # scrape only; touch nothing
-    python -m scraper.main --no-notify     # scrape + store, skip the SMS
     python -m scraper.main --only github   # run a single source family
     python -m scraper.main -v              # debug logging
 
 Sources run concurrently (they hit unrelated hosts, so parallelism is safe);
 each source's *internal* requests stay sequential with 1-5 s human pauses.
 A source that throws is logged and contributes zero listings -- one broken
-site never cancels the others or the notification.
+site never cancels the others or the CSV write.
 
-Every new listing is stored in jobs.db regardless of age. Only listings
-posted within the last `notify.recent_hours` (48h by default, see config.py)
-go out in the SMS digest -- the rest just sits in the database, searchable
-with `python -m scraper.query`.
+No credentials, no email, no SMS gateway, no residential-IP considerations --
+every new listing found gets appended to `listings.csv` (see config.py) and
+also stored in jobs.db for dedup + `python -m scraper.query` lookups.
 """
 
 from __future__ import annotations
@@ -26,8 +24,8 @@ import random
 import sys
 
 from .config import CONFIG
+from .csv_export import append_listings
 from .database import JobStore
-from .notifier import build_digest, send_digest
 from .sources import ashby, fortune500, github_repos, instagram, job_boards, workday
 from .utils import Listing, setup_logging
 
@@ -67,11 +65,9 @@ async def run_all(only: str | None = None) -> list[Listing]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Zero-cost daily job scraper (Playwright + SQLite + SMS)")
+        description="Zero-cost daily job scraper (Playwright + SQLite + CSV)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="scrape and print, but skip DB writes and SMS")
-    parser.add_argument("--no-notify", action="store_true",
-                        help="store new listings but do not send the digest")
+                        help="scrape and print, but skip DB writes and the CSV")
     parser.add_argument("--only", choices=sorted(SOURCE_REGISTRY),
                         help="run a single source family")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -95,21 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         log.info("no new listings today -- done")
         return 0
 
-    recent_hours = CONFIG["notify"]["recent_hours"]
-    recent = [item for item in fresh if item.is_recent(recent_hours)]
-    stale = len(fresh) - len(recent)
-    log.info("%d new listing(s) within the last %dh (%d older/undated stored "
-             "only -- see `python -m scraper.query`)",
-             len(recent), recent_hours, stale)
-
-    if not recent:
-        log.info("nothing within the %dh SMS window -- done", recent_hours)
-        return 0
-
-    print(build_digest(recent))  # always echo the digest to the console/log
-    if args.no_notify:
-        return 0
-    return 0 if send_digest(recent) else 1
+    append_listings(CONFIG["csv_path"], fresh)
+    print(f"\n{len(fresh)} new listing(s) appended to {CONFIG['csv_path']}")
+    for item in fresh:
+        print(f"  [{item.source}] {item.title}\n    {item.link}")
+    return 0
 
 
 if __name__ == "__main__":
