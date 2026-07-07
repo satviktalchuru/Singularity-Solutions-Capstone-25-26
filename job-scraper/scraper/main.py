@@ -13,6 +13,15 @@ site never cancels the others or the CSV write.
 No credentials, no email, no SMS gateway, no residential-IP considerations --
 every new listing found gets appended to `listings.csv` (see config.py) and
 also stored in jobs.db for dedup + `python -m scraper.query` lookups.
+
+Before writing to the CSV, every new listing passes through filters.py:
+senior/staff/lead/manager-type titles are dropped entirely, as are postings
+whose description explicitly requires more than CONFIG["max_years_experience"]
+years -- both are hard filters. New-grad-signal listings aren't required,
+just sorted first and flagged (`new_grad_signal` column) as a soft target.
+Filtered-out listings are still recorded in jobs.db (so they're not
+re-evaluated every run) but never appear in the CSV; use --no-filter to see
+everything unfiltered.
 """
 
 from __future__ import annotations
@@ -26,6 +35,7 @@ import sys
 from .config import CONFIG
 from .csv_export import append_listings
 from .database import JobStore
+from .filters import apply_filters
 from .sources import ashby, fortune500, github_repos, instagram, job_boards, workday
 from .utils import Listing, setup_logging
 
@@ -70,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="scrape and print, but skip DB writes and the CSV")
     parser.add_argument("--only", choices=sorted(SOURCE_REGISTRY),
                         help="run a single source family")
+    parser.add_argument("--no-filter", action="store_true",
+                        help="skip seniority/experience filtering -- write everything new")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="debug logging")
     args = parser.parse_args(argv)
@@ -91,10 +103,26 @@ def main(argv: list[str] | None = None) -> int:
         log.info("no new listings today -- done")
         return 0
 
-    append_listings(CONFIG["csv_path"], fresh)
-    print(f"\n{len(fresh)} new listing(s) appended to {CONFIG['csv_path']}")
-    for item in fresh:
-        print(f"  [{item.source}] {item.title}\n    {item.link}")
+    if args.no_filter:
+        kept = [(item, False) for item in fresh]
+        dropped = []
+    else:
+        kept, dropped = apply_filters(fresh, max_years=CONFIG["max_years_experience"])
+
+    if dropped:
+        log.info("filtered out %d listing(s) as senior/over-experienced "
+                 "(still recorded in jobs.db, just not in the CSV)", len(dropped))
+
+    if not kept:
+        log.info("nothing passed the filters this run -- done")
+        return 0
+
+    append_listings(CONFIG["csv_path"], kept)
+    print(f"\n{len(kept)} new listing(s) appended to {CONFIG['csv_path']}"
+         f" ({sum(1 for _, ng in kept if ng)} new-grad signal)")
+    for item, new_grad in kept:
+        tag = " [NEW GRAD]" if new_grad else ""
+        print(f"  [{item.source}] {item.title}{tag}\n    {item.link}")
     return 0
 
 

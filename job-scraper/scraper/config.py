@@ -61,6 +61,12 @@ CONFIG: dict = {
     # rewritten). Open it in Excel/Sheets/pandas whenever you want to check.
     "csv_path": str(PROJECT_ROOT / "listings.csv"),
 
+    # Hard filter (see filters.py): senior/staff/lead/manager-type titles are
+    # always dropped; postings whose description explicitly states a
+    # required years-of-experience above this number are also dropped. New
+    # grad keywords are a soft target instead -- see filters.py docstring.
+    "max_years_experience": 2,
+
     # -----------------------------------------------------------------------
     # SOURCES -- add/remove entries freely; each scraper module documents its
     # own entry format at the top of the file.
@@ -90,10 +96,14 @@ CONFIG: dict = {
                 "mode": "json",
                 # Greenhouse exposes a public, keyless JSON board per company:
                 # https://boards-api.greenhouse.io/v1/boards/<company>/jobs
-                "url": "https://boards-api.greenhouse.io/v1/boards/stripe/jobs",
+                # ?content=true additionally includes the full HTML job
+                # description, which is what lets the seniority/years-of-
+                # experience filters (filters.py) look past just the title.
+                "url": "https://boards-api.greenhouse.io/v1/boards/stripe/jobs?content=true",
                 "list_path": "jobs",
                 "title_key": "title",
                 "link_key": "absolute_url",
+                "description_key": "content",
             },
             {
                 "name": "Anthropic (HTML example)",

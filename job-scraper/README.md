@@ -7,17 +7,17 @@ credentials, no gateway to configure. Open `listings.csv` in Excel/Sheets/
 pandas whenever you want to check what's new.
 
 ```
-┌────────────────────── daily run (cron / Task Scheduler) ───────────────────────┐
-│                                                                                │
-│  SCRAPING LAYER                        DEDUP LAYER            OUTPUT          │
-│  ─────────────────────────             ───────────────        ────────────    │
-│  fortune500  (Playwright/httpx)   ─┐                                          │
-│  ashby       (httpx JSON API)     ─┤                                          │
-│  workday     (httpx CXS API)      ─┤─▶ jobs.db (SQLite) ──▶ new rows only ──▶  │
-│  github      (httpx REST API)     ─┤   sha256(link|title)      listings.csv   │
-│  instagram   (RSS-Bridge, zero2sudo)┤  INSERT OR IGNORE                       │
-│  job_boards  (Google CSE / RSS)   ─┘  full history, always                    │
-└────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────── daily run (cron / Task Scheduler) ─────────────────────────────┐
+│                                                                                         │
+│  SCRAPING LAYER                    DEDUP LAYER          FILTER LAYER        OUTPUT      │
+│  ─────────────────────────         ───────────────      ──────────────     ────────    │
+│  fortune500  (Playwright/httpx)─┐                                                      │
+│  ashby       (httpx JSON API)  ─┤                       drop senior/                   │
+│  workday     (httpx CXS API)   ─┤─▶ jobs.db (SQLite) ─▶ staff/lead titles ─▶ listings.csv│
+│  github      (httpx REST API)  ─┤   sha256(link|title)  & >2yr-experience              │
+│  instagram   (RSS-Bridge)      ─┤   INSERT OR IGNORE     descriptions;                  │
+│  job_boards  (Google CSE / RSS) ─┘   full history         new-grad first                │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick start
@@ -29,27 +29,58 @@ pip install -r requirements.txt
 playwright install chromium
 
 python -m scraper.main --dry-run    # test scrape, nothing saved
-python -m scraper.main              # real run: dedupe + append to listings.csv
-python -m scraper.query python      # search everything ever scraped, any age
+python -m scraper.main              # real run: dedupe + filter + append to listings.csv
+python -m scraper.main --no-filter  # same, but skip seniority/experience filtering
+python -m scraper.query python      # search everything ever scraped (unfiltered), any age
 ```
 
 No `.env` file is required to run this at all — `cp .env.example .env` only
 matters if you want the two optional tokens described below (higher GitHub
 rate limits, the Google CSE job-board source).
 
+## Filtering: no senior roles, 0-2 years target
+
+Every new listing is checked by [`scraper/filters.py`](scraper/filters.py)
+before it reaches the CSV:
+
+- **Senior/staff/lead/manager/director/architect/"Engineer III"-style titles
+  are dropped entirely** — checked against both the title and, when a source
+  provides one, the full job description.
+- **Postings whose description explicitly states more than 2 years of
+  required experience are also dropped** (`CONFIG["max_years_experience"]`,
+  config.py). If a source doesn't give a description (Workday's list
+  endpoint, GitHub, Instagram, Google CSE), there's nothing to check, so
+  it's kept rather than guessed away.
+- **New grad / entry-level / intern keywords are a soft target, not a
+  requirement**: matching listings get `new_grad_signal=True` and are sorted
+  to the top of each run's output, but a listing without that keyword isn't
+  penalized — it just wasn't stated either way.
+
+Dropped listings are still recorded in `jobs.db` (so they're not re-evaluated
+every run) but never written to the CSV. Run with `--no-filter` to see
+everything unfiltered, or use `python -m scraper.query` to search the full
+archive directly.
+
+Only a few sources currently have description text to filter on: Ashby
+(always), Greenhouse-via-`fortune500.py` (with `?content=true` +
+`description_key` set, see below), and RSS feeds that include a
+`<description>` (WeWorkRemotely, RemoteOK). Workday's search API and
+HTML-scraped pages don't expose a description without an extra per-posting
+fetch, so those are filtered on title only.
+
 ## Output: `listings.csv`
 
-Every run appends new rows (existing ones are never rewritten) with columns:
+Every run appends new, filter-passing rows (existing ones are never
+rewritten) with columns:
 
 ```
-source, title, link, posted_at, scraped_at, recent_48h
+source, title, link, posted_at, scraped_at, recent_48h, new_grad_signal
 ```
 
 `posted_at` is filled in when the source provides a real timestamp (Ashby,
-GitHub, RSS `pubDate`, Instagram); `recent_48h` is a convenience True/False
-(blank if unknown) so you can filter/sort for "what's actually new" in
-Excel/Sheets without recomputing it — it doesn't gate what gets written,
-every new listing is always appended regardless of age.
+GitHub, RSS `pubDate`, Instagram); `recent_48h` and `new_grad_signal` are
+convenience True/False columns (blank if unknown) for filtering/sorting in
+Excel/Sheets without recomputing them yourself.
 
 ## Configuration
 

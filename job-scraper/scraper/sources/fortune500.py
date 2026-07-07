@@ -7,11 +7,18 @@ mode "json"  -- the career site is backed by a clean JSON endpoint
                 Fetched with httpx; no browser involved.
     {
         "name": "Acme", "mode": "json",
-        "url": "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+        "url": "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
         "list_path": "jobs",           # dotted path to the postings array
         "title_key": "title",          # dotted path inside each posting
         "link_key": "absolute_url",
         "posted_at_key": "updated_at", # optional; omit if the feed has none
+        "description_key": "content", # optional; HTML description, stripped
+                                       # automatically -- lets filters.py check
+                                       # for seniority/years-of-experience
+                                       # language instead of just the title.
+                                       # For Greenhouse specifically this
+                                       # requires the ?content=true query param
+                                       # above, which is off by default.
     }
 
 Dedicated Ashby (`sources/ashby.py`) and Workday (`sources/workday.py`)
@@ -41,7 +48,7 @@ from urllib.parse import urljoin
 import httpx
 
 from ..config import MAX_RESULTS_PER_SOURCE, USER_AGENTS
-from ..utils import Listing, dig, human_sleep, parse_timestamp
+from ..utils import Listing, dig, human_sleep, parse_timestamp, strip_html
 from .browser import stealth_page
 
 log = logging.getLogger("scraper.fortune500")
@@ -73,11 +80,15 @@ async def _scrape_json(entry: dict) -> list[Listing]:
         posted_at = None
         if entry.get("posted_at_key"):
             posted_at = parse_timestamp(dig(posting, entry["posted_at_key"]))
+        description = ""
+        if entry.get("description_key"):
+            description = strip_html(str(dig(posting, entry["description_key"]) or ""))
         listings.append(Listing(
             source=f"fortune500:{entry['name']}",
             title=str(title),
             link=urljoin(entry.get("base_url", entry["url"]), str(link)),
             posted_at=posted_at,
+            description=description,
         ))
     return listings
 

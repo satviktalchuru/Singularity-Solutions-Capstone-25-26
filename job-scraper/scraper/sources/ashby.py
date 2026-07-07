@@ -10,8 +10,10 @@ Find <board-name> in the company's careers URL -- e.g.
 
     {"name": "Notion", "board": "notion"}
 
-Each posting carries a `publishedDate`, which populates `Listing.posted_at`
-so the 48h SMS filter can tell a same-day posting from a stale one.
+Each posting carries a `publishedDate` (-> `Listing.posted_at`) and usually a
+`descriptionHtml`/`descriptionPlain` body (-> `Listing.description`, stripped
+to plain text), which is what lets filters.py check for seniority/years-of-
+experience language instead of just guessing off the title.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import random
 import httpx
 
 from ..config import MAX_RESULTS_PER_SOURCE, USER_AGENTS
-from ..utils import Listing, human_sleep, parse_timestamp
+from ..utils import Listing, human_sleep, parse_timestamp, strip_html
 
 log = logging.getLogger("scraper.ashby")
 
@@ -46,11 +48,15 @@ async def _scrape_company(client: httpx.AsyncClient, entry: dict) -> list[Listin
             posting.get("publishedDate") or posting.get("publishedAt")
             or posting.get("updatedAt")
         )
+        description = strip_html(
+            posting.get("descriptionPlain") or posting.get("descriptionHtml") or ""
+        )
         listings.append(Listing(
             source=f"ashby:{entry['name']}",
             title=title,
             link=link,
             posted_at=posted_at,
+            description=description,
         ))
     return listings
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import logging
 import random
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -39,6 +41,12 @@ class Listing:
     # listings are still stored, just excluded from the "last 48h" SMS digest
     # since we can't verify how new they actually are.
     posted_at: datetime | None = None
+    # Plain-text job description, when the source's API/feed provides one
+    # (Ashby, Greenhouse with content=true, RSS <description>). Empty string
+    # when unavailable (Workday's list endpoint, GitHub, Instagram, Google
+    # CSE) -- filters.py treats "no description" as "can't verify, don't
+    # exclude on experience-level grounds" rather than assuming the worst.
+    description: str = ""
 
     @property
     def job_id(self) -> str:
@@ -112,3 +120,15 @@ def truncate(text: str, limit: int) -> str:
     """Trim text to `limit` chars, appending an ellipsis when cut."""
     text = " ".join(text.split())  # collapse whitespace/newlines
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def strip_html(raw: str) -> str:
+    """Reduce an HTML job-description blob to plain text for keyword/regex
+    matching in filters.py. Not meant to preserve formatting -- just enough
+    to search for phrases like "senior" or "2+ years of experience".
+    """
+    if not raw:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", raw)
+    text = html.unescape(text)
+    return " ".join(text.split())

@@ -31,7 +31,7 @@ import httpx
 
 from ..config import (GOOGLE_CSE_CX, GOOGLE_CSE_KEY, MAX_RESULTS_PER_SOURCE,
                       USER_AGENTS)
-from ..utils import Listing, human_sleep, parse_timestamp, truncate
+from ..utils import Listing, human_sleep, parse_timestamp, strip_html, truncate
 
 log = logging.getLogger("scraper.job_boards")
 
@@ -73,12 +73,16 @@ def _parse_feed(xml_text: str, name: str, keywords: list[str]) -> list[Listing]:
     root = ET.fromstring(xml_text)
 
     # RSS 2.0: <rss><channel><item>...  |  Atom: <feed><entry>...
-    items: list[tuple[str, str, str]] = []  # (title, link, published)
+    # description/summary is captured too -- many job RSS feeds (WeWorkRemotely,
+    # RemoteOK) include the full posting body here, which is what lets
+    # filters.py check for seniority/years-of-experience language.
+    items: list[tuple[str, str, str, str]] = []  # (title, link, published, description)
     for item in root.iter("item"):  # RSS
         title = item.findtext("title", default="").strip()
         link = item.findtext("link", default="").strip()
         published = item.findtext("pubDate", default="").strip()
-        items.append((title, link, published))
+        description = item.findtext("description", default="") or ""
+        items.append((title, link, published, description))
     if not items:  # fall back to Atom
         for entry in root.findall("atom:entry", ATOM_NS):
             title = (entry.findtext("atom:title", default="", namespaces=ATOM_NS)
@@ -88,11 +92,14 @@ def _parse_feed(xml_text: str, name: str, keywords: list[str]) -> list[Listing]:
             published = (entry.findtext("atom:published", default="", namespaces=ATOM_NS)
                         or entry.findtext("atom:updated", default="", namespaces=ATOM_NS)
                         or "").strip()
-            items.append((title, link, published))
+            description = (entry.findtext("atom:summary", default="", namespaces=ATOM_NS)
+                          or entry.findtext("atom:content", default="", namespaces=ATOM_NS)
+                          or "")
+            items.append((title, link, published, description))
 
     wanted = [kw.lower() for kw in keywords]
     listings: list[Listing] = []
-    for title, link, published in items[:MAX_RESULTS_PER_SOURCE]:
+    for title, link, published, description in items[:MAX_RESULTS_PER_SOURCE]:
         if not (title and link):
             continue
         if wanted and not any(kw in title.lower() for kw in wanted):
@@ -102,6 +109,7 @@ def _parse_feed(xml_text: str, name: str, keywords: list[str]) -> list[Listing]:
             title=truncate(title, 100),
             link=link,
             posted_at=parse_timestamp(published),
+            description=strip_html(description),
         ))
     return listings
 
