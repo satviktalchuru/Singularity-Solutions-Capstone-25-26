@@ -31,7 +31,7 @@ import httpx
 
 from ..config import (GOOGLE_CSE_CX, GOOGLE_CSE_KEY, MAX_RESULTS_PER_SOURCE,
                       USER_AGENTS)
-from ..utils import Listing, human_sleep, truncate
+from ..utils import Listing, human_sleep, parse_timestamp, truncate
 
 log = logging.getLogger("scraper.job_boards")
 
@@ -73,22 +73,26 @@ def _parse_feed(xml_text: str, name: str, keywords: list[str]) -> list[Listing]:
     root = ET.fromstring(xml_text)
 
     # RSS 2.0: <rss><channel><item>...  |  Atom: <feed><entry>...
-    items: list[tuple[str, str]] = []  # (title, link)
+    items: list[tuple[str, str, str]] = []  # (title, link, published)
     for item in root.iter("item"):  # RSS
         title = item.findtext("title", default="").strip()
         link = item.findtext("link", default="").strip()
-        items.append((title, link))
+        published = item.findtext("pubDate", default="").strip()
+        items.append((title, link, published))
     if not items:  # fall back to Atom
         for entry in root.findall("atom:entry", ATOM_NS):
             title = (entry.findtext("atom:title", default="", namespaces=ATOM_NS)
                      or "").strip()
             link_el = entry.find("atom:link", ATOM_NS)
             link = link_el.get("href", "") if link_el is not None else ""
-            items.append((title, link))
+            published = (entry.findtext("atom:published", default="", namespaces=ATOM_NS)
+                        or entry.findtext("atom:updated", default="", namespaces=ATOM_NS)
+                        or "").strip()
+            items.append((title, link, published))
 
     wanted = [kw.lower() for kw in keywords]
     listings: list[Listing] = []
-    for title, link in items[:MAX_RESULTS_PER_SOURCE]:
+    for title, link, published in items[:MAX_RESULTS_PER_SOURCE]:
         if not (title and link):
             continue
         if wanted and not any(kw in title.lower() for kw in wanted):
@@ -97,6 +101,7 @@ def _parse_feed(xml_text: str, name: str, keywords: list[str]) -> list[Listing]:
             source=f"job_boards:{name}",
             title=truncate(title, 100),
             link=link,
+            posted_at=parse_timestamp(published),
         ))
     return listings
 

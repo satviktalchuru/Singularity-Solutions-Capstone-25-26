@@ -10,6 +10,11 @@ Sources run concurrently (they hit unrelated hosts, so parallelism is safe);
 each source's *internal* requests stay sequential with 1-5 s human pauses.
 A source that throws is logged and contributes zero listings -- one broken
 site never cancels the others or the notification.
+
+Every new listing is stored in jobs.db regardless of age. Only listings
+posted within the last `notify.recent_hours` (48h by default, see config.py)
+go out in the SMS digest -- the rest just sits in the database, searchable
+with `python -m scraper.query`.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import sys
 from .config import CONFIG
 from .database import JobStore
 from .notifier import build_digest, send_digest
-from .sources import fortune500, github_repos, instagram, job_boards
+from .sources import ashby, fortune500, github_repos, instagram, job_boards, workday
 from .utils import Listing, setup_logging
 
 log = logging.getLogger("scraper.main")
@@ -31,6 +36,8 @@ log = logging.getLogger("scraper.main")
 # source-family name -> (scrape coroutine fn, config key)
 SOURCE_REGISTRY = {
     "fortune500": fortune500.scrape,
+    "ashby": ashby.scrape,
+    "workday": workday.scrape,
     "github": github_repos.scrape,
     "instagram": instagram.scrape,
     "job_boards": job_boards.scrape,
@@ -82,16 +89,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     store = JobStore(CONFIG["database_path"])
-    fresh = store.filter_new(raw)
+    fresh = store.filter_new(raw)  # persists ALL new listings, any age
 
     if not fresh:
         log.info("no new listings today -- done")
         return 0
 
-    print(build_digest(fresh))  # always echo the digest to the console/log
+    recent_hours = CONFIG["notify"]["recent_hours"]
+    recent = [item for item in fresh if item.is_recent(recent_hours)]
+    stale = len(fresh) - len(recent)
+    log.info("%d new listing(s) within the last %dh (%d older/undated stored "
+             "only -- see `python -m scraper.query`)",
+             len(recent), recent_hours, stale)
+
+    if not recent:
+        log.info("nothing within the %dh SMS window -- done", recent_hours)
+        return 0
+
+    print(build_digest(recent))  # always echo the digest to the console/log
     if args.no_notify:
         return 0
-    return 0 if send_digest(fresh) else 1
+    return 0 if send_digest(recent) else 1
 
 
 if __name__ == "__main__":

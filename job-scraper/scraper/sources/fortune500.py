@@ -11,7 +11,14 @@ mode "json"  -- the career site is backed by a clean JSON endpoint
         "list_path": "jobs",           # dotted path to the postings array
         "title_key": "title",          # dotted path inside each posting
         "link_key": "absolute_url",
+        "posted_at_key": "updated_at", # optional; omit if the feed has none
     }
+
+Dedicated Ashby (`sources/ashby.py`) and Workday (`sources/workday.py`)
+modules exist for those two ATS platforms specifically -- prefer those when
+a company uses one, since they parse posting dates for you. Use this
+generic "json"/"html" scraper for everything else (Greenhouse, Lever,
+custom career pages, etc.).
 
 mode "html"  -- no JSON endpoint exists; render the page with stealth
                 Playwright and pull cards out with CSS selectors.
@@ -34,7 +41,7 @@ from urllib.parse import urljoin
 import httpx
 
 from ..config import MAX_RESULTS_PER_SOURCE, USER_AGENTS
-from ..utils import Listing, dig, human_sleep
+from ..utils import Listing, dig, human_sleep, parse_timestamp
 from .browser import stealth_page
 
 log = logging.getLogger("scraper.fortune500")
@@ -63,10 +70,14 @@ async def _scrape_json(entry: dict) -> list[Listing]:
         link = dig(posting, entry["link_key"])
         if not (title and link):
             continue  # tolerate partial/odd records instead of crashing
+        posted_at = None
+        if entry.get("posted_at_key"):
+            posted_at = parse_timestamp(dig(posting, entry["posted_at_key"]))
         listings.append(Listing(
             source=f"fortune500:{entry['name']}",
             title=str(title),
             link=urljoin(entry.get("base_url", entry["url"]), str(link)),
+            posted_at=posted_at,
         ))
     return listings
 

@@ -19,7 +19,7 @@ import random
 import httpx
 
 from ..config import GITHUB_TOKEN, USER_AGENTS
-from ..utils import Listing, human_sleep, truncate
+from ..utils import Listing, human_sleep, parse_timestamp, truncate
 
 log = logging.getLogger("scraper.github")
 
@@ -49,10 +49,12 @@ async def _fetch_commits(client: httpx.AsyncClient, repo: str) -> list[Listing]:
     for commit in resp.json():
         message = commit.get("commit", {}).get("message", "")
         first_line = message.splitlines()[0] if message else "(no message)"
+        commit_date = commit.get("commit", {}).get("author", {}).get("date")
         listings.append(Listing(
             source=f"github:{repo}",
             title=f"commit: {truncate(first_line, 80)}",
             link=commit.get("html_url", f"https://github.com/{repo}/commits"),
+            posted_at=parse_timestamp(commit_date),
         ))
     return listings
 
@@ -69,6 +71,7 @@ async def _fetch_latest_release(client: httpx.AsyncClient, repo: str) -> list[Li
         source=f"github:{repo}",
         title=f"release: {truncate(name, 80)}",
         link=release.get("html_url", f"https://github.com/{repo}/releases"),
+        posted_at=parse_timestamp(release.get("published_at")),
     )]
 
 

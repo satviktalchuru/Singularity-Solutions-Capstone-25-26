@@ -4,4 +4,4 @@ per-source failures are logged and yield an empty list so one broken site
 cannot take down the whole daily run.
 """
 
-from . import fortune500, github_repos, instagram, job_boards  # noqa: F401
+from . import ashby, fortune500, github_repos, instagram, job_boards, workday  # noqa: F401

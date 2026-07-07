@@ -1,11 +1,15 @@
 """Zero-cost notification layer: Gmail SMTP -> email-to-SMS gateway.
 
-Carrier gateways (e.g. 5551234567@vtext.com) accept plain email and deliver
+Carrier gateways (e.g. 9259185702@vtext.com) accept plain email and deliver
 the body as a text message, but truncate around 160 characters. The digest is
 therefore compressed hard and split into numbered parts, capped at
 `max_sms_parts` so a busy scrape day can't spam your phone. Any recipient
 that looks like a normal inbox address also works -- it simply receives the
 same condensed text.
+
+This module only formats/sends whatever list of listings it's given -- the
+"only listings from the last 48h" filtering happens one layer up, in
+main.py, via `Listing.is_recent()`.
 """
 
 from __future__ import annotations
@@ -34,8 +38,8 @@ def build_digest(listings: list[Listing]) -> str:
         return ""
 
     # Per-source counts, abbreviated to keep the header short.
-    abbrev = {"fortune500": "F500", "github": "GH",
-              "instagram": "IG", "job_boards": "JOBS"}
+    abbrev = {"fortune500": "F500", "ashby": "ASHB", "workday": "WD",
+              "github": "GH", "instagram": "IG", "job_boards": "JOBS"}
     counts: dict[str, int] = {}
     for item in listings:
         family = item.source.split(":", 1)[0]

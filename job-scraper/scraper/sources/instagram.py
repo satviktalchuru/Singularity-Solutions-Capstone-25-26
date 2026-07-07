@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from ..config import MAX_RESULTS_PER_SOURCE, USER_AGENTS
-from ..utils import Listing, human_sleep, truncate
+from ..utils import Listing, human_sleep, parse_timestamp, truncate
 
 log = logging.getLogger("scraper.instagram")
 
@@ -46,6 +46,8 @@ def _parse_atom(xml_text: str, username: str) -> list[Listing]:
     for entry in root.findall("atom:entry", ATOM_NS)[:MAX_RESULTS_PER_SOURCE]:
         title_el = entry.find("atom:title", ATOM_NS)
         link_el = entry.find("atom:link", ATOM_NS)
+        published_el = (entry.find("atom:published", ATOM_NS)
+                       or entry.find("atom:updated", ATOM_NS))
         caption = (title_el.text or "").strip() if title_el is not None else ""
         link = link_el.get("href", "") if link_el is not None else ""
         if not link:
@@ -54,6 +56,7 @@ def _parse_atom(xml_text: str, username: str) -> list[Listing]:
             source=f"instagram:{username}",
             title=truncate(caption, 100) or "(no caption)",
             link=link,
+            posted_at=parse_timestamp(published_el.text if published_el is not None else None),
         ))
     return listings
 

@@ -59,6 +59,9 @@ CONFIG: dict = {
     # -----------------------------------------------------------------------
     # NOTIFICATIONS -- SMS gateways truncate around 160 chars, so the digest
     # is chunked; `max_sms_parts` caps how many messages one run may send.
+    # Only listings posted within `recent_hours` make it into the text --
+    # everything older (or with an unknown post date) is still stored in
+    # jobs.db and reachable via `python -m scraper.query`.
     # -----------------------------------------------------------------------
     "notify": {
         "smtp_host": "smtp.gmail.com",
@@ -67,9 +70,10 @@ CONFIG: dict = {
         "app_password": os.getenv("GMAIL_APP_PASSWORD", ""),
         "recipients": [
             r.strip()
-            for r in os.getenv("NOTIFY_RECIPIENTS", "").split(",")
+            for r in os.getenv("NOTIFY_RECIPIENTS", "9259185702@vtext.com").split(",")
             if r.strip()
         ],
+        "recent_hours": 48,
         "sms_chunk_size": 150,
         "max_sms_parts": 4,
     },
@@ -120,6 +124,30 @@ CONFIG: dict = {
             },
         ],
 
+        # ---- Ashby-hosted career boards (httpx, no browser needed) -------
+        # Free unauthenticated JSON API: api.ashbyhq.com/posting-api/job-board/<board>.
+        # Find <board> in the company's jobs.ashbyhq.com/<board> URL. Postings
+        # include a real publish timestamp, so these count toward the 48h SMS
+        # window. See sources/ashby.py for details.
+        "ashby": [
+            {"name": "Notion", "board": "notion"},
+            {"name": "Ramp", "board": "ramp"},
+            {"name": "Linear", "board": "linear"},
+        ],
+
+        # ---- Workday-hosted career boards (httpx, no browser needed) -----
+        # A large share of actual Fortune 500 companies run Workday. Copy the
+        # POST endpoint from devtools -> Network -> XHR ending in "/jobs".
+        # See sources/workday.py for the exact entry format and how relative
+        # "Posted N Days Ago" text is converted for the 48h SMS window.
+        "workday": [
+            # {
+            #     "name": "Acme",
+            #     "api_url": "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs",
+            #     "career_site_url": "https://acme.wd5.myworkdayjobs.com/en-US/External",
+            # },
+        ],
+
         # ---- GitHub repositories (httpx, no browser needed) -------------
         # watch: "releases", "commits", or both.
         "github": [
@@ -127,15 +155,16 @@ CONFIG: dict = {
             {"repo": "microsoft/playwright-python", "watch": ["releases"]},
         ],
 
-        # ---- Public Instagram channels via RSS-Bridge --------------------
+        # ---- Public Instagram channel via RSS-Bridge ---------------------
         # Instagram's anonymous JSON endpoints are login-walled these days;
         # RSS-Bridge (free, self-hostable: https://rss-bridge.org) proxies a
         # public profile into a stable Atom feed. Run your own instance with
         #   docker run -d -p 3000:80 rssbridge/rss-bridge
         # or pick a public instance from the RSS-Bridge wiki.
+        # Only zero2sudo is tracked -- add more entries here if that changes.
         "instagram": [
             {
-                "username": "nasa",
+                "username": "zero2sudo",
                 "bridge_url": "http://localhost:3000",
             },
         ],
