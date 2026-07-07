@@ -1,8 +1,0 @@
-# Core scraping stack -- everything here is free / open source.
-playwright>=1.44          # Headless Chromium automation
-playwright-stealth>=1.0.6 # Patches navigator.webdriver & other bot fingerprints
-httpx>=0.27               # Async HTTP client for JSON APIs / RSS feeds
-python-dotenv>=1.0        # Loads optional .env tokens (GitHub, Google CSE)
-
-# After `pip install -r requirements.txt`, run once:
-#   playwright install chromium
