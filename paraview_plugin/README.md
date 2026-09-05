@@ -1,55 +1,34 @@
-# ParaView Borehole Reconstruction Plugin
+# ParaView 5.10 Borehole Reconstruction Plugin
 
-This plugin wraps the project's slice-based borehole reconstruction pipeline as a ParaView Python filter.
+This is a compatibility version of the borehole reconstruction plugin for older ParaView environments.
+
+## Main difference from the ParaView 6 plugin
+
+This version avoids `scipy` and uses NumPy/VTK-only replacements for:
+- Gaussian smoothing
+- binary morphology
+- connected components
+
+It also uses a simpler PCA-based final ellipse fit instead of the SciPy optimizer. That makes the plugin easier to load on older ParaView builds, but the output may be slightly less accurate than the full ParaView 6 version.
 
 ## Files
-- `/Users/akhilgorla/Singularity Solutions/paraview_plugin/borehole_reconstruction_plugin.py`
-- `/Users/akhilgorla/Singularity Solutions/paraview_plugin/borehole_core.py`
 
-## What it does
-- takes a `vtkPointSet` input
-- reconstructs a borehole surface from the point cloud
-- outputs a `vtkPolyData` borehole mesh
-- stores summary metrics in output field data
+- `borehole_reconstruction_510_plugin.py`
+- `borehole_core_510.py`
 
-Current field-data metrics include:
-- `accepted_slice_count`
-- `observed_slice_count`
-- `interpolated_slice_count`
-- `boundary_nonmanifold_edge_segments`
-- `resid_med_mean`
-- `resid_p90_mean`
-- `inlier_mean`
-- `center_jump_median`
-- `major_pct_abs_median`
-- `minor_pct_abs_median`
-- `theta_median`
-- `iou_median`
+## Load in ParaView 5.10
 
-Per-slice arrays for observed slices are also attached as field data:
-- `slice_axis_center`
-- `slice_resid_med`
-- `slice_resid_p90`
-- `slice_inlier`
-
-## Load in ParaView
 1. Open ParaView.
 2. Go to `Tools -> Manage Plugins`.
-3. Click `Load New`.
-4. Select:
-   - `/Users/akhilgorla/Singularity Solutions/paraview_plugin/borehole_reconstruction_plugin.py`
-
-After loading, the filter appears as:
-- `Borehole Reconstruction`
-
-## Important environment requirement
-This is a Python plugin and depends on:
-- `numpy`
-- `scipy`
-
-Those packages must be available in ParaView's Python environment. If ParaView cannot import `scipy`, the plugin will fail to load or execute.
+3. Click `Load New...`.
+4. Select `borehole_reconstruction_510_plugin.py`.
+5. Load a point-cloud dataset.
+6. Select the point cloud in the Pipeline Browser.
+7. Search for `Borehole Reconstruction 5.10` in Filters.
+8. Click `Apply`.
 
 ## Recommended first settings
+
 - `SliceAxis = 0`
 - `FractionStart = 0.01`
 - `FractionEnd = 0.69`
@@ -57,12 +36,7 @@ Those packages must be available in ParaView's Python environment. If ParaView c
 - `ThicknessFraction = 0.02`
 - `MirrorPoints = 1`
 - `MirrorAxis = 1`
-- `LowDensityQuantile = 0.10`
-- `SmoothSigma = 4.0`
-- `EnableShortGapFill = 1`
-- `MaximumInterpolatedGap = 2`
 
 ## Notes
-- This plugin is the first ParaView integration pass. It is designed to preserve the current project logic rather than simplify it into a toy filter.
-- It does not yet expose every internal parameter from the standalone script.
-- It intentionally does not include the removed auto-interval selection logic.
+
+This version is intended as a compatibility bridge for ParaView 5.10. The full plugin in `paraview_plugin/` remains the preferred version for ParaView 6.1.
