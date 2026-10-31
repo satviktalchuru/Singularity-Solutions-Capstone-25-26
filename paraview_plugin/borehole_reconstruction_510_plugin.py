@@ -33,6 +33,21 @@ class BoreholeConfig510:
         self.occ_dilate_iters = 5
         self.min_comp_area = 120
         self.max_comp_frac = 0.20
+        self.max_component_candidates = 8
+        self.enable_dog_candidates = True
+        self.dog_scales = (3.0, 5.0, 8.0, 12.0, 16.0)
+        self.dog_max_candidates = 6
+        self.dog_density_quantile = 0.30
+        self.enable_global_tracking_fallback = True
+        self.global_tracking_trigger_frac = 0.25
+        self.global_tracking_max_gap = 3
+        self.global_tracking_max_center_step = 2.0
+        self.global_tracking_max_axis_jump = 2.5
+        self.min_boundary_candidates = 50
+        self.boundary_band_cells = 2.0
+        self.adaptive_boundary_band = True
+        self.max_boundary_band_cells = 8.0
+        self.boundary_band_growth = 1.5
         self.do_mirror = True
         self.mirror_axis = 1
         self.ellipse_q = 90.0
@@ -41,6 +56,14 @@ class BoreholeConfig510:
         self.outer_band_keep_per_sector = 6
         self.max_ar = 4.0
         self.max_axis_jump = 2.0
+        self.enable_trajectory_gate = True
+        self.trajectory_min_history = 3
+        self.trajectory_window = 5
+        self.max_center_prediction_frac = 0.75
+        self.max_axis_prediction_frac = 0.45
+        self.enable_confidence_gate = True
+        self.min_slice_confidence = 0.35
+        self.confidence_sectors = 24
         self.enable_short_gap_fill = True
         self.max_interp_gap = 2
         self.n_ring = 240
@@ -319,6 +342,46 @@ class BoreholeReconstruction510Portable(VTKPythonAlgorithmBase):
     @smdomain.intrange(min=0, max=10)
     def SetMaximumInterpolatedGap(self, value):
         self._set_cfg("max_interp_gap", int(value))
+
+    @smproperty.intvector(name="EnableTrajectoryGate", default_values=1)
+    @smdomain.intrange(min=0, max=1)
+    def SetEnableTrajectoryGate(self, value):
+        self._set_cfg("enable_trajectory_gate", bool(value))
+
+    @smproperty.doublevector(name="MaximumCenterPredictionError", default_values=0.75)
+    @smdomain.doublerange(min=0.05, max=5.0)
+    def SetMaximumCenterPredictionError(self, value):
+        self._set_cfg("max_center_prediction_frac", float(value))
+
+    @smproperty.doublevector(name="MaximumAxisPredictionError", default_values=0.45)
+    @smdomain.doublerange(min=0.05, max=2.0)
+    def SetMaximumAxisPredictionError(self, value):
+        self._set_cfg("max_axis_prediction_frac", float(value))
+
+    @smproperty.intvector(name="EnableConfidenceGate", default_values=1)
+    @smdomain.intrange(min=0, max=1)
+    def SetEnableConfidenceGate(self, value):
+        self._set_cfg("enable_confidence_gate", bool(value))
+
+    @smproperty.doublevector(name="MinimumSliceConfidence", default_values=0.35)
+    @smdomain.doublerange(min=0.0, max=1.0)
+    def SetMinimumSliceConfidence(self, value):
+        self._set_cfg("min_slice_confidence", float(value))
+
+    @smproperty.intvector(name="EnableAdaptiveBoundaryBand", default_values=1)
+    @smdomain.intrange(min=0, max=1)
+    def SetEnableAdaptiveBoundaryBand(self, value):
+        self._set_cfg("adaptive_boundary_band", bool(value))
+
+    @smproperty.doublevector(name="MaximumBoundaryBandCells", default_values=8.0)
+    @smdomain.doublerange(min=2.0, max=20.0)
+    def SetMaximumBoundaryBandCells(self, value):
+        self._set_cfg("max_boundary_band_cells", float(value))
+
+    @smproperty.intvector(name="EnableMultiScaleBlobCandidates", default_values=1)
+    @smdomain.intrange(min=0, max=1)
+    def SetEnableMultiScaleBlobCandidates(self, value):
+        self._set_cfg("enable_dog_candidates", bool(value))
 
     def RequestData(self, request, inInfo, outInfo):
         input_data = vtk.vtkDataObject.GetData(inInfo[0], 0)
